@@ -3,6 +3,8 @@ Python handler to ease metamorphic testing in simulations.
 
 ## Applying Metamorphic Testing to custom models 
 
+![architecture](img/mm_architecture.png)
+
 ### Inputs/Outputs
 Inputs and outputs are assumed to be managed throught text files. The values in each port is defined in idividual files. Each line in these files has a pair of "[simulation_time] [value]", sorted by simulation time. An example can be seen below:
 ```
