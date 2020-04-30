@@ -1,12 +1,15 @@
-
+import os
 from abc import ABC, abstractmethod
 import re
+from collections import OrderedDict
+
+from visualization import Visualizer
 
 
 class StatesMonitor:
-    REGEX_LINE = r"([0-9]{2}):([0-9]{2}):([0-9]{2})(?::([0-9]{3}))? ([0-9.e-]+)"
+    REGEX_LINE = r"([0-9]{2}):([0-9]{2}):([0-9]{2})(?::([0-9]{3}))? (.+)"
 
-    def __init__(self, path):
+    def __init__(self, path, multival=False):
         self.in_stream = open(path, "r")
         self.finished = False
 
@@ -15,6 +18,8 @@ class StatesMonitor:
 
         self.next_time = None
         self.next_state = None
+
+        self.multival = multival
 
         self.advance()
 
@@ -25,11 +30,11 @@ class StatesMonitor:
         self.curr_time = self.next_time
         self.curr_state = self.next_state
 
-        while self.curr_time == self.next_time:
+        while not self.finished and self.curr_time == self.next_time:
             line = self.in_stream.readline()
 
             if line:
-                self.next_time, self.next_state = StatesMonitor.parse_state(line.strip())
+                self.next_time, self.next_state = self.parse_state(line.strip())
 
                 if self.curr_time == self.next_time:
                     self.curr_state = self.next_state
@@ -38,8 +43,7 @@ class StatesMonitor:
                 self.next_time = None
                 self.next_state = None
 
-    @staticmethod
-    def parse_state(line):
+    def parse_state(self, line):
         match = re.match(StatesMonitor.REGEX_LINE, line)
 
         if not match:
@@ -50,82 +54,89 @@ class StatesMonitor:
         state_time = 3.6e6 * int(hours) + 6e4 * int(minutes) + 1e3 * int(seconds)
         if nanoseconds is not None:
             state_time += int(nanoseconds)
-        return int(state_time), float(state)
+
+        if self.multival:
+            state = re.split("\s+", state)
+            for i in range(len(state)):
+                if state[i].isnumeric():
+                    state[i] = float(state[i])
+        else:
+            if state.isnumeric():
+                state = float(state)
+
+        return int(state_time), state
 
 
 class TestingHandler(ABC):
 
     def __init__(self, visualizer=None):
         self._sim_time = 0
-        self.inputs = None
-        self.outputs = None
         self.visualizer = visualizer
+        self.port_values = {}
 
-    @abstractmethod
-    def get_next_event_time(self):
-        pass
+    @staticmethod
+    def get_next_event_time(inputs):
+        try:
+            return min(mon.next_time for mon in inputs.values() if mon.next_time is not None)
+        except (ValueError, TypeError):
+            return None
 
-    @abstractmethod
-    def execute_time(self, sim_time):
-        pass
+    @staticmethod
+    def check_relations(inputs, outputs, relations):
+        if relations is None:
+            return
 
-    @abstractmethod
-    def check_relations(self, inputs, outputs):
-        pass
+        for rel_name, rel_fun in relations.items():
+            print("Checking %s relation..." % rel_name)
+            rel_fun(inputs, outputs)
 
-    def show_io_values(self):
-        inp_values = {k: v.curr_state for k, v in self.inputs.items()}
-        print("Inputs:", inp_values)
+    @staticmethod
+    def execute_time(sim_time: float, ports: dict):
+        for port in ports:
+            mon = ports[port]
+            if mon.next_time == sim_time:
+                mon.advance()
 
-        out_values = {k: v.curr_state for k, v in self.outputs.items()}
-        print("Outputs:", out_values)
-
-    def run(self):
-        if self.inputs is None:
+    def _run_test_case(self, tc_id: str, inputs: dict, outputs: dict, relations: dict = None, show_values: bool = True):
+        if inputs is None:
             raise RuntimeError("Inputs not specified.")
 
-        sim_time = self.get_next_event_time()
+        if tc_id not in self.port_values:
+            self.port_values[tc_id] = OrderedDict()
+
+        sim_time = TestingHandler.get_next_event_time(inputs)
         while sim_time is not None:
             print("\nExecuting simulation time %.3f" % (sim_time / 1000))
-            self.execute_time(sim_time)
-            self.show_io_values()
+            TestingHandler.execute_time(sim_time, inputs)
+            TestingHandler.execute_time(sim_time, outputs)
+
+            inp_values = {k: v.curr_state for k, v in inputs.items()}
+            out_values = {k: v.curr_state for k, v in outputs.items()}
+            self.port_values[tc_id][sim_time] = (inp_values, out_values)
+
+            if show_values:
+                print("Inputs:", inp_values)
+                print("Outputs:", out_values)
+
             if self.visualizer is not None:
                 self.visualizer.update(self)
                 self.visualizer.show()
-            self.check_relations(self.inputs, self.outputs)
-            sim_time = self.get_next_event_time()
+
+            TestingHandler.check_relations(inputs, outputs, relations)
+            sim_time = self.get_next_event_time(inputs)
 
 
 class MetamorphicTestingHandler(TestingHandler):
 
-    def __init__(self, inputs, outputs, in_path_prefix="", out_path_prefix="", relations=None, visualizer=None):
+    def __init__(self, input_filenames: dict, output_filenames: dict, visualizer: Visualizer = None, multival=False):
         super().__init__(visualizer)
-        self.inputs = {k: StatesMonitor(in_path_prefix + v) for k, v in inputs.items()}
-        self.outputs = {k: StatesMonitor(out_path_prefix + v) for k, v in outputs.items()}
         self.last_state = None
-        self.relations = relations
+        self.input_filenames = input_filenames
+        self.output_filenames = output_filenames
+        self.multival = multival
 
-    def get_next_event_time(self):
-        try:
-            return min(mon.next_time for mon in self.inputs.values() if mon.next_time is not None)
-        except (ValueError, TypeError):
-            return None
+    def run_test_case(self, tc_id: str, input_path: str, output_path: str, relations: dict):
+        inputs = {k: StatesMonitor(os.path.join(input_path, v), multival=self.multival) for k, v in self.input_filenames.items()}
+        outputs = {k: StatesMonitor(os.path.join(output_path, v), multival=self.multival) for k, v in self.output_filenames.items()}
 
-    def execute_time(self, sim_time):
-        for in_file in self.inputs:
-            mon = self.inputs[in_file]
-            if mon.next_time == sim_time:
-                mon.advance()
-
-        for out_file in self.outputs:
-            mon = self.outputs[out_file]
-            if mon.next_time == sim_time:
-                mon.advance()
-
-    def check_relations(self, inputs, outputs):
-        if self.relations is None:
-            return
-
-        for rel_name, rel_fun in self.relations.items():
-            print("Checking %s relation..." % rel_name)
-            rel_fun(inputs, outputs)
+        self._run_test_case(tc_id, inputs, outputs, relations)
