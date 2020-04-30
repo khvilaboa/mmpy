@@ -1,0 +1,23 @@
+
+# alarm_when_some_red_led
+out:e1l1 == 1 or out:e2l1 == 1 -> out:alarm == 1
+
+# emergency_controllers_red_dependency
+out:e1l1 == 1 -> (out:e2l1 == 1 and out:e2l2 == 0) or (out:e2l1 == 0 and out:e2l2 == 1)
+out:e2l1 == 1 -> (out:e1l1 == 1 and out:e1l2 == 0) or (out:e1l1 == 0 and out:e1l2 == 1)
+
+# emergency_controllers_red_green_dependency
+out:e1l2 == 1 -> out:e2l1 == 1
+out:e2l2 == 1 -> out:e1l1 == 1
+
+# exclusive_emergency_controller_outputs
+out:e1l1 == 0 or out:e1l2 == 0
+out:e2l1 == 0 or out:e2l2 == 0
+
+# lights_ir_dependencies_without_alarm
+out:alarm == 0 -> out:r1l1 == in:ir1 and out:r2l1 == in:ir2
+out:alarm == 0 and out:r1l2 == 1 -> out:r1l1 == 1
+out:alarm == 0 and out:r1l2 == 1 -> out:r1l1 == 1
+
+# lights_on_when_alarm_activated
+out:alarm == 1 -> out:r1l1 == 1 and out:r1l2 == 1 and out:r2l1 == 1 and out:r2l2 == 1

@@ -82,7 +82,7 @@ class TestingHandler(ABC):
             return None
 
     @staticmethod
-    def check_relations(inputs, outputs, relations):
+    def check_func_relations(inputs, outputs, relations):
         if relations is None:
             return
 
@@ -97,12 +97,64 @@ class TestingHandler(ABC):
             if mon.next_time == sim_time:
                 mon.advance()
 
-    def _run_test_case(self, tc_id: str, inputs: dict, outputs: dict, relations: dict = None, show_values: bool = True):
+    @staticmethod
+    def parse_file_relations(inputs, outputs, relations_fn):
+        relations = []
+        with open(relations_fn, "r") as rel_file:
+            for line in rel_file.readlines():
+                line = line.strip()
+                if line != "" and not line.startswith("#"):
+                    print(line)
+                    relation = []
+                    line_comps = line.split("->")
+                    for comp in line_comps:
+                        in_dep = []
+                        out_dep = []
+                        for port_type, name in re.findall("(in|out):([a-zA-Z0-9_-]+)", comp):
+                            if port_type == "in":
+                                if name not in in_dep:
+                                    in_dep.append(name)
+                            else:
+                                if name not in out_dep:
+                                    out_dep.append(name)
+                        relation.append(((in_dep, out_dep), comp.strip()))
+
+                    if len(relation) == 1:
+                        relation.insert(0, None)
+
+                    relations.append(relation)
+
+        return relations
+
+    @staticmethod
+    def check_file_relations(inputs, outputs, relations):
+        def rule_accomplished(rule):
+            (in_deps, out_deps), to_eval = rule
+            for in_dep in in_deps:
+                to_eval = to_eval.replace("in:%s" % in_dep, str(inputs[in_dep].curr_state))
+
+            for out_dep in out_deps:
+                to_eval = to_eval.replace("out:%s" % out_dep, str(outputs[out_dep].curr_state))
+
+            return eval(to_eval)
+
+        for pre, post in relations:
+            if pre is None or rule_accomplished(pre):
+                if not rule_accomplished(post):
+                    raise RuntimeError("Rule not accomplished: %s (pre: %s)" % (post[1], pre[1]))
+
+
+    def _run_test_case(self, tc_id: str, inputs: dict, outputs: dict, relations: dict = None, relations_fn:str = None, show_values: bool = True):
         if inputs is None:
             raise RuntimeError("Inputs not specified.")
 
         if tc_id not in self.port_values:
             self.port_values[tc_id] = OrderedDict()
+
+        if relations_fn is not None:
+            file_relations = TestingHandler.parse_file_relations(inputs, outputs, relations_fn)
+        else:
+            file_relations = None
 
         sim_time = TestingHandler.get_next_event_time(inputs)
         while sim_time is not None:
@@ -122,8 +174,14 @@ class TestingHandler(ABC):
                 self.visualizer.update(self)
                 self.visualizer.show()
 
-            TestingHandler.check_relations(inputs, outputs, relations)
+            if relations:
+                TestingHandler.check_func_relations(inputs, outputs, relations)
+
+            if file_relations:
+                TestingHandler.check_file_relations(inputs, outputs, file_relations)
+
             sim_time = self.get_next_event_time(inputs)
+
 
 
 class MetamorphicTestingHandler(TestingHandler):
@@ -135,8 +193,8 @@ class MetamorphicTestingHandler(TestingHandler):
         self.output_filenames = output_filenames
         self.multival = multival
 
-    def run_test_case(self, tc_id: str, input_path: str, output_path: str, relations: dict):
+    def run_test_case(self, tc_id: str, input_path: str, output_path: str, relations_fun: dict, relations_fn: str):
         inputs = {k: StatesMonitor(os.path.join(input_path, v), multival=self.multival) for k, v in self.input_filenames.items()}
         outputs = {k: StatesMonitor(os.path.join(output_path, v), multival=self.multival) for k, v in self.output_filenames.items()}
 
-        self._run_test_case(tc_id, inputs, outputs, relations)
+        self._run_test_case(tc_id, inputs, outputs, relations_fun, relations_fn)
