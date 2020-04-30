@@ -4,6 +4,7 @@ import re
 from collections import OrderedDict
 
 from visualization import Visualizer
+from inspect import signature
 
 
 class StatesMonitor:
@@ -82,13 +83,21 @@ class TestingHandler(ABC):
             return None
 
     @staticmethod
-    def check_func_relations(inputs, outputs, relations):
+    def check_func_relations(inputs, outputs, relations, relations_mem):
         if relations is None:
             return
 
         for rel_name, rel_fun in relations.items():
             print("Checking %s relation..." % rel_name)
-            rel_fun(inputs, outputs)
+            has_mem = len(signature(rel_fun).parameters) == 3
+
+            if has_mem:
+                mem = relations_mem[rel_name] if rel_name in relations_mem else {}
+                res = rel_fun(inputs, outputs, mem)
+                if res is not None:
+                    relations_mem[rel_name] = res
+            else:
+                rel_fun(inputs, outputs)
 
     @staticmethod
     def execute_time(sim_time: float, ports: dict):
@@ -156,6 +165,8 @@ class TestingHandler(ABC):
         else:
             file_relations = None
 
+        relations_mem = dict() if relations is not None else None
+
         sim_time = TestingHandler.get_next_event_time(inputs)
         while sim_time is not None:
             print("\nExecuting simulation time %.3f" % (sim_time / 1000))
@@ -175,7 +186,7 @@ class TestingHandler(ABC):
                 self.visualizer.show()
 
             if relations:
-                TestingHandler.check_func_relations(inputs, outputs, relations)
+                TestingHandler.check_func_relations(inputs, outputs, relations, relations_mem)
 
             if file_relations:
                 TestingHandler.check_file_relations(inputs, outputs, file_relations)

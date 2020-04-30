@@ -145,6 +145,15 @@ def lights_on_when_alarm_activated(inputs, outputs):
         assert outputs["r2l1"].curr_state == 1
         assert outputs["r2l2"].curr_state == 1
 
+def rule_with_mem(inputs, outputs, mem):
+    if "cont" not in mem:
+        mem["cont"] = 0
+
+    mem["cont"] += 1
+    return mem
+
+
+
 
 mm_relations = {
     "alarm_when_some_red_led": alarm_when_some_red_led,
@@ -153,6 +162,7 @@ mm_relations = {
     "exclusive_emergency_controller_outputs": exclusive_emergency_controller_outputs,
     "lights_ir_dependencies_without_alarm": lights_ir_dependencies_without_alarm,
     "lights_on_when_alarm_activated": lights_on_when_alarm_activated,
+    "rule_with_mem": rule_with_mem
 }
 
 mmth = MetamorphicTestingHandler(INPUTS, OUTPUTS,
