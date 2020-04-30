@@ -156,8 +156,8 @@ mm_relations = {
 }
 
 mmth = MetamorphicTestingHandler(INPUTS, OUTPUTS,
-                                 in_path_prefix=IN_PATH,
-                                 out_path_prefix=OUT_PATH,
-                                 relations=mm_relations,
-                                 visualizer=BuildingVisualizer())
-mmth.run()
+                                 visualizer=None)
+                                 # visualizer=BuildingVisualizer())
+
+mmth.run_test_case("sim1", IN_PATH, OUT_PATH, mm_relations)
+print(len(mmth.port_values))
