@@ -171,4 +171,4 @@ mmth = MetamorphicTestingHandler(INPUTS, OUTPUTS,
 
 mm_relations_filename = "building_rules.txt"
 mmth.run_test_case("sim1", IN_PATH, OUT_PATH, mm_relations, mm_relations_filename)
-print(len(mmth.port_values))
+#print(len(mmth.port_values))

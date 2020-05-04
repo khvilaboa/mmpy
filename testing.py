@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 from visualization import Visualizer
 from inspect import signature
-
+import itertools
 
 class StatesMonitor:
     REGEX_LINE = r"([0-9]{2}):([0-9]{2}):([0-9]{2})(?::([0-9]{3}))? (.+)"
@@ -71,43 +71,51 @@ class StatesMonitor:
 class TestingHandler(ABC):
 
     def __init__(self, visualizer=None):
-        self._sim_time = 0
+        self.sim_time = 0
         self.visualizer = visualizer
         self.port_values = {}
 
-    @staticmethod
-    def get_next_event_time(inputs):
+        self.inputs = None
+        self.outputs = None
+        self.relations = None
+        self.file_relations = None
+
+    def get_next_event_time(self):
         try:
-            return min(mon.next_time for mon in inputs.values() if mon.next_time is not None)
+            min_in = min(mon.next_time for mon in self.inputs.values() if mon.next_time is not None)
+            min_out = min(mon.next_time for mon in self.outputs.values() if mon.next_time is not None)
+            return min(min_in, min_out)
         except (ValueError, TypeError):
             return None
 
-    @staticmethod
-    def check_func_relations(inputs, outputs, relations, relations_mem):
-        if relations is None:
+    def check_func_relations(self):
+        if self.relations is None:
             return
 
-        for rel_name, rel_fun in relations.items():
+        for rel_name, rel_fun in self.relations.items():
             print("Checking %s relation..." % rel_name)
             has_mem = len(signature(rel_fun).parameters) == 3
 
             if has_mem:
-                mem = relations_mem[rel_name] if rel_name in relations_mem else {}
-                res = rel_fun(inputs, outputs, mem)
+                mem = self.relations_mem[rel_name] if rel_name in self.relations_mem else {}
+                res = rel_fun(self.inputs, self.outputs, mem)
                 if res is not None:
-                    relations_mem[rel_name] = res
+                    self.relations_mem[rel_name] = res
             else:
-                rel_fun(inputs, outputs)
+                rel_fun(self.inputs, self.outputs)
 
-    @staticmethod
-    def execute_time(sim_time: float, ports: dict):
-        for port in ports:
-            mon = ports[port]
-            if mon.next_time == sim_time:
+    def execute_time(self):
+        for port in self.inputs:
+            mon = self.inputs[port]
+            if mon.next_time == self.sim_time:
                 mon.advance()
 
-    @staticmethod
-    def parse_file_relations(inputs, outputs, relations_fn):
+        for port in self.outputs:
+            mon = self.outputs[port]
+            if mon.next_time == self.sim_time:
+                mon.advance()
+
+    def parse_file_relations(self, relations_fn):
         relations = []
         with open(relations_fn, "r") as rel_file:
             for line in rel_file.readlines():
@@ -133,49 +141,50 @@ class TestingHandler(ABC):
 
                     relations.append(relation)
 
-        return relations
+        self.file_relations = relations
 
-    @staticmethod
-    def check_file_relations(inputs, outputs, relations):
+    def check_file_relations(self):
         def rule_accomplished(rule):
             (in_deps, out_deps), to_eval = rule
             for in_dep in in_deps:
-                to_eval = to_eval.replace("in:%s" % in_dep, str(inputs[in_dep].curr_state))
+                to_eval = to_eval.replace("in:%s" % in_dep, str(self.inputs[in_dep].curr_state))
 
             for out_dep in out_deps:
-                to_eval = to_eval.replace("out:%s" % out_dep, str(outputs[out_dep].curr_state))
+                to_eval = to_eval.replace("out:%s" % out_dep, str(self.outputs[out_dep].curr_state))
 
             return eval(to_eval)
 
-        for pre, post in relations:
+        for pre, post in self.file_relations:
             if pre is None or rule_accomplished(pre):
                 if not rule_accomplished(post):
                     raise RuntimeError("Rule not accomplished: %s (pre: %s)" % (post[1], pre[1]))
-
 
     def _run_test_case(self, tc_id: str, inputs: dict, outputs: dict, relations: dict = None, relations_fn:str = None, show_values: bool = True):
         if inputs is None:
             raise RuntimeError("Inputs not specified.")
 
+        self.inputs = inputs
+        self.outputs = outputs
+        self.relations = relations
+
         if tc_id not in self.port_values:
             self.port_values[tc_id] = OrderedDict()
 
         if relations_fn is not None:
-            file_relations = TestingHandler.parse_file_relations(inputs, outputs, relations_fn)
+            self.parse_file_relations(relations_fn)
         else:
-            file_relations = None
+            self.file_relations = None
 
-        relations_mem = dict() if relations is not None else None
+        self.relations_mem = dict() if relations is not None else None
 
-        sim_time = TestingHandler.get_next_event_time(inputs)
-        while sim_time is not None:
-            print("\nExecuting simulation time %.3f" % (sim_time / 1000))
-            TestingHandler.execute_time(sim_time, inputs)
-            TestingHandler.execute_time(sim_time, outputs)
+        self.sim_time = self.get_next_event_time()
+        while self.sim_time is not None:
+            print("\nExecuting simulation time %.3f" % (self.sim_time / 1000))
+            self.execute_time()
 
             inp_values = {k: v.curr_state for k, v in inputs.items()}
             out_values = {k: v.curr_state for k, v in outputs.items()}
-            self.port_values[tc_id][sim_time] = (inp_values, out_values)
+            self.port_values[tc_id][self.sim_time] = (inp_values, out_values)
 
             if show_values:
                 print("Inputs:", inp_values)
@@ -186,12 +195,12 @@ class TestingHandler(ABC):
                 self.visualizer.show()
 
             if relations:
-                TestingHandler.check_func_relations(inputs, outputs, relations, relations_mem)
+                self.check_func_relations()
 
-            if file_relations:
-                TestingHandler.check_file_relations(inputs, outputs, file_relations)
+            if self.file_relations:
+                self.check_file_relations()
 
-            sim_time = self.get_next_event_time(inputs)
+            self.sim_time = self.get_next_event_time()
 
 
 
